@@ -1,0 +1,441 @@
+#!/bin/bash 
+# Get configurations
+SOURCE_CONFIG="`pwd`/run_sim.config"
+source $SOURCE_CONFIG
+
+# Start log
+echo -e "\n\n****************************************************\n" | tee -a $SIM_LOG_FILENAME
+echo -e "Script execution start: `date +%d_%b-%H_%M_%S`" | tee -a $SIM_LOG_FILENAME
+echo -e "\n****************************************************\n" | tee -a $SIM_LOG_FILENAME
+
+################################
+# Execute RTL Simulation function
+################################
+function execute_sim_rtl {
+    export ARCH_PATH=$1
+    echo ${ARCH_PATH}
+    export CURRENT_MOVIE=$2
+    export ARCH_NAME=`basename $ARCH_PATH | cut -d. -f 1`
+    export ARCH_TYPE=`echo $ARCH_NAME | cut -d_ -f 1`
+    #export BENCH_SOURCE=`basename $ARCH_PATH | egrep -o "TREE_[0-9][0-9]*" | sed -r "s/[A-Z_]//g"`
+    
+    # Create working dir
+    cd ${SIMULATION_ROOT}
+    export CURRENT_SIM_FOLDER="RTL_${ARCH_NAME}_C${CLK_PER}_${CURRENT_MOVIE}"
+    mkdir -p "${CURRENT_SIM_FOLDER}"
+    cd "${CURRENT_SIM_FOLDER}"
+  
+    # Remove previous version of TCL file
+    rm -rf ${ARCH_NAME}.tcl
+
+    # Active TCF dump
+    if [ $DUMP_TCF == true ]; then
+        echo -e "dumptcf -internal -output ${TCF_ROOT}/${CURRENT_SIM_FOLDER}.tcf -scope ${TESTBENCH_TOP}.${TESTBENCH_INST} -overwrite -verbose -flatformat -dumpwireasnet" > ${ARCH_NAME}.tcl
+    fi
+    
+    # Enable or not the VCD dumping
+    if [ $NO_VCD == false ]; then
+        echo -e "database -open sim_vcd -into ${VCD_ROOT}/${CURRENT_SIM_FOLDER}.vcd -default -vcd -timescale ps" >> ${ARCH_NAME}.tcl
+        echo -e "probe -create -vcd -depth all -inputs -outputs -ports" >> ${ARCH_NAME}.tcl
+    fi
+    
+
+    # Run simulation
+    echo -e "run" >> ${ARCH_NAME}.tcl
+    if [ $DUMP_TCF == true ]; then
+        echo -e "dumptcf -end" >> ${ARCH_NAME}.tcl
+    fi
+    echo -e "exit" >> ${ARCH_NAME}.tcl
+
+    echo "oi"
+
+    echo ${CURRENT_MOVIE}
+
+
+    /bin/bash -c 'source /lab215/scripts/set_cadence.bash; \
+        irun -access +rwc \
+        -l ${ARCH_NAME}.log -input ${ARCH_NAME}.tcl -timescale 1ns/1ps -top work.${TESTBENCH_TOP}:${BENCH_FILE_EXT} -defparam ${TESTBENCH_TOP}.PERIOD=60 \
+        -defparam ${TESTBENCH_TOP}.INPUT_PATH=\"${STIMULI_DEBUG_ROOT}/${CURRENT_MOVIE}\" \
+        -v200x -verbose -work work \
+        ${ARCH_PATH}/*.vhd ${BENCH_ROOT}/tb_decision.v'
+
+    if [ $DUMP_TCF == true ]; then
+        /bin/bash -c 'find ${TCF_ROOT} -name "${CURRENT_SIM_FOLDER}.tcf" -exec sed -i "s/${TESTBENCH_TOP}\/${TESTBENCH_INST}\///g" {} +;'
+    fi
+    #${ARCH_PATH} ${BASE_ROOT}/*.vhd ${BENCH_ROOT}/tb_${ARCH_TYPE}.arch_${BENCH_SOURCE}.${BENCH_FILE_EXT}'
+}
+
+################################
+# Execute RTL Simulation GUI function
+################################
+function execute_sim_rtl_gui {
+    export ARCH_PATH=$1
+    export CURRENT_MOVIE=$2
+    export ARCH_NAME=`basename $ARCH_PATH | cut -d. -f 2`
+    export BENCH_SOURCE=`basename $ARCH_PATH | cut -d. -f 1-2`
+
+    # Create working dir
+    cd ${SIMULATION_ROOT}
+    CURRENT_SIM_FOLDER="RTL_${ARCH_NAME}_C${CLK_PER}_${CURRENT_MOVIE}"
+    mkdir -p "${CURRENT_SIM_FOLDER}"
+    cd "${CURRENT_SIM_FOLDER}"
+  
+    # Remove previous version of TCL file
+    rm -rf ${ARCH_NAME}.tcl
+
+
+    /bin/bash -c 'source /lab215/scripts/set_cadence.bash; \
+        irun -64bit -access +rwc -gui -incdir ${BENCH_ROOT} -uvmhome ${UVM_PATH} -uvm \
+        -l ${ARCH_NAME}.log -timescale 1ns/1ps -top work.${TESTBENCH_TOP}:${BENCH_FILE_EXT} \
+        -defparam ${TESTBENCH_TOP}.PERIOD=60 -defparam ${TESTBENCH_TOP}.INPUT_PATH=\"${STIMULI_DEBUG_ROOT}/${CURRENT_MOVIE}\" \
+        -v200x -verbose -work work \
+        ${ARCH_PATH}/*.vhd ${BENCH_ROOT}/tb_decision.v'
+}
+
+################################
+# Execute Post-synth Simulation function
+################################
+function execute_sim_netlist {
+    # Setting up variables
+    export ARCH_PATH=$1
+    export CURRENT_MOVIE=$2
+    export ARCH_NAME=`basename $ARCH_PATH | sed -r "s/synthesis_RTL_//g" | sed -r "s/_MVT[a-zA-Z0-9._]*//g"`
+    #export BENCH_SOURCE=`echo $ARCH_NAME | egrep -o "TREE_[0-9][0-9]*" | sed -r "s/[A-Z_]//g"`
+    export ARCH_TYPE=`echo $ARCH_NAME | cut -d_ -f 1`
+    #export ARCH_SIZE=`echo $ARCH_NAME | egrep -o "[0-9]+"`
+    ENABLED_HAFA=`basename $ARCH_PATH | egrep -o "HAFA_(true|false)" | sed "s/HAFA_//g"`
+    export ENABLE_MULTI_VT=`basename $ARCH_PATH | egrep -o "MVT_(true|false)" | sed "s/MVT_//g"`
+    SYNTH_VDD=`basename $ARCH_PATH | egrep -o "VDD_[0-9.]+" | sed "s/VDD_//g"`
+    export CLK_PER=`basename $ARCH_PATH | egrep -o "C[0-9.]+$" | sed "s/C//g"`
+    export COMB_EFFORT=`basename $ARCH_PATH | egrep -o "EFFORT_[LMH][LMH][LMH]" | sed "s/EFFORT_//g"`
+    
+    # Create working dir
+    cd ${SIMULATION_ROOT}
+    export CURRENT_SIM_FOLDER="SYNTH_${ARCH_NAME}_MVT_${ENABLE_MULTI_VT}_VDD_${SYNTH_VDD}_HAFA_${ENABLED_HAFA}_EFFORT_${COMB_EFFORT}_C${CLK_PER}_${CURRENT_MOVIE}"
+    mkdir -p "${CURRENT_SIM_FOLDER}"
+    cd "${CURRENT_SIM_FOLDER}"
+    
+    # Remove previous version of TCL file
+    rm -rf ${ARCH_NAME}.tcl
+
+    # Active TCF dump
+    if [ $DUMP_TCF == true ]; then
+        echo -e "dumptcf -internal -output ${TCF_ROOT}/${CURRENT_SIM_FOLDER}.tcf -scope ${TESTBENCH_TOP}.${TESTBENCH_INST} -overwrite -verbose -flatformat -dumpwireasnet" > ${ARCH_NAME}.tcl
+    fi
+  
+    # Enable or not the VCD dumping
+    if [ $NO_VCD == false ]; then
+        echo -e "database -open sim_vcd -into ${VCD_ROOT}/${CURRENT_SIM_FOLDER}.vcd -default -vcd -timescale ps" >> ${ARCH_NAME}.tcl
+        echo -e "probe -create -vcd -depth all -inputs -outputs -ports" >> ${ARCH_NAME}.tcl
+    fi
+
+    echo ${CLK_PER}
+    echo "OI simul"
+    # Run simulation
+    echo -e "run" >> ${ARCH_NAME}.tcl
+    if [ $DUMP_TCF == true ]; then
+        echo -e "dumptcf -end" >> ${ARCH_NAME}.tcl
+    fi
+    echo -e "exit" >> ${ARCH_NAME}.tcl
+    
+    if [ "$ENABLE_MULTI_VT" = false ]; then 
+        export VERILOG_PRIMITIVES="/lab215/pdk/st/cmos065_421/CORE65LPSVT_SNPS-AVT-CDS_4.1/behaviour/verilog/CORE65LPSVT.v \
+            /lab215/pdk/st/cmos065_421/CLOCK65LPSVT_SNPS-AVT-CDS_2.1/behaviour/verilog/CLOCK65LPSVT.v"
+    else
+        export VERILOG_PRIMITIVES="/lab215/pdk/st/cmos065_421/CORE65LPSVT_SNPS-AVT-CDS_4.1/behaviour/verilog/CORE65LPSVT.v \
+            /lab215/pdk/st/cmos065_421/CORE65LPHVT_SNPS-AVT-CDS_4.1/behaviour/verilog/CORE65LPHVT.v \
+            /lab215/pdk/st/cmos065_421/CORE65LPLVT_SNPS-AVT-CDS_4.1/behaviour/verilog/CORE65LPLVT.v \
+            /lab215/pdk/st/cmos065_421/CLOCK65LPSVT_SNPS-AVT-CDS_2.1/behaviour/verilog/CLOCK65LPSVT.v \
+            /lab215/pdk/st/cmos065_421/CLOCK65LPHVT_SNPS-AVT-CDS_2.1/behaviour/verilog/CLOCK65LPHVT.v \
+            /lab215/pdk/st/cmos065_421/CLOCK65LPLVT_SNPS-AVT-CDS_2.1/behaviour/verilog/CLOCK65LPLVT.v"
+    fi
+
+    echo ${STIMULI_ROOT}/${CURRENT_MOVIE}
+
+    /bin/bash -c 'source /lab215/scripts/set_cadence.bash; \
+        irun -access +rwc -smartorder \
+        -l ${ARCH_NAME}.log -input ${ARCH_NAME}.tcl -timescale 1ns/1ps \
+        -top work.${TESTBENCH_TOP}:${BENCH_FILE_EXT} \
+        -sdf_cmd_file ${ARCH_PATH}/outputs/sdf_cmd_file \
+        -defparam ${TESTBENCH_TOP}.PERIOD=${CLK_PER} \
+        -defparam ${TESTBENCH_TOP}.INPUT_PATH=\"${STIMULI_ROOT}/${CURRENT_MOVIE}\" \
+        -v200x -verbose -work work \
+        ${VERILOG_PRIMITIVES} \
+        ${ARCH_PATH}/outputs/${DESIGN_NAME}.v ${BENCH_ROOT}/tb_decision.v'
+
+    if [ $DUMP_TCF == true ]; then
+        /bin/bash -c 'find ${TCF_ROOT} -name "${CURRENT_SIM_FOLDER}.tcf" -exec sed -i "s/${TESTBENCH_TOP}\/${TESTBENCH_INST}\///g" {} +;'
+    fi
+    #mv out.vcd ${ARCH_PATH}/${ARCH_NAME}_HAFA_${ENABLED_HAFA}_C${CLK_PER}_${CURRENT_MOVIE}.vcd
+}
+
+function execute_sim_netlist_nodelay {
+    export ARCH_PATH=$1
+    export ARCH_NAME=`basename $ARCH_PATH | sed -r "s/synthesis_RTL_//g" | sed -r "s/_MVT[a-zA-Z0-9._]*//g"`
+    #export ARCH_SIZE=`echo $ARCH_NAME | egrep -o "[0-9]+"`
+    ENABLED_HAFA=`basename $ARCH_PATH | egrep -o "HAFA_(true|false)" | sed "s/HAFA_//g"`
+    ENABLE_MULTI_VT=`basename $ARCH_PATH | egrep -o "MVT_(true|false)" | sed "s/MVT_//g"`
+    SYNTH_VDD=`basename $ARCH_PATH | egrep -o "VDD_[0-9.]+" | sed "s/VDD_//g"`
+    export CLK_PER=`basename $ARCH_PATH | egrep -o "C[0-9.]+$" | sed "s/C//g"`
+    
+    # Create working dir
+    cd ${SIMULATION_ROOT}
+    CURRENT_SIM_FOLDER="SYNTH_${ARCH_NAME}_MVT_${ENABLE_MULTI_VT}_VDD_${SYNTH_VDD}_HAFA_${ENABLED_HAFA}_C${CLK_PER}"
+    mkdir -p "${CURRENT_SIM_FOLDER}"
+    cd "${CURRENT_SIM_FOLDER}"
+  
+    # Remove previous version of TCL file
+    rm -rf ${ARCH_NAME}.tcl
+
+    # Active TCF dump
+    if [ $DUMP_TCF == true ]; then
+        echo -e "dumptcf -internal -output ${TCF_ROOT}/${CURRENT_SIM_FOLDER}.tcf -scope ${TESTBENCH_TOP}.${TESTBENCH_INST} -overwrite -verbose -flatformat -dumpwireasnet" > ${ARCH_NAME}.tcl
+    fi
+  
+    # Enable or not the VCD dumping
+    if [ $NO_VCD == false ]; then
+        echo -e "database -open sim_vcd -into ${VCD_ROOT}/${CURRENT_SIM_FOLDER}.vcd -default -vcd -timescale ps" >> ${ARCH_NAME}.tcl
+        echo -e "probe -create -vcd -depth all -inputs -outputs -ports" >> ${ARCH_NAME}.tcl
+    fi
+    
+    # Run simulation
+    echo -e "run" >> ${ARCH_NAME}.tcl
+    if [ $DUMP_TCF == true ]; then
+        echo -e "dumptcf -end" >> ${ARCH_NAME}.tcl
+    fi
+    echo -e "exit" >> ${ARCH_NAME}.tcl
+
+    if [ "$ENABLE_MULTI_VT" = false ]; then 
+        export VERILOG_PRIMITIVES="/lab215/pdk/st/cmos065_421/CORE65LPSVT_SNPS-AVT-CDS_4.1/behaviour/verilog/CORE65LPSVT.v \
+            /lab215/pdk/st/cmos065_421/CLOCK65LPSVT_SNPS-AVT-CDS_2.1/behaviour/verilog/CLOCK65LPSVT.v"
+    else
+        export VERILOG_PRIMITIVES="/lab215/pdk/st/cmos065_421/CORE65LPSVT_SNPS-AVT-CDS_4.1/behaviour/verilog/CORE65LPSVT.v \
+            /lab215/pdk/st/cmos065_421/CORE65LPHVT_SNPS-AVT-CDS_4.1/behaviour/verilog/CORE65LPHVT.v \
+            /lab215/pdk/st/cmos065_421/CORE65LPLVT_SNPS-AVT-CDS_4.1/behaviour/verilog/CORE65LPLVT.v \
+            /lab215/pdk/st/cmos065_421/CLOCK65LPSVT_SNPS-AVT-CDS_2.1/behaviour/verilog/CLOCK65LPSVT.v \
+            /lab215/pdk/st/cmos065_421/CLOCK65LPHVT_SNPS-AVT-CDS_2.1/behaviour/verilog/CLOCK65LPHVT.v \
+            /lab215/pdk/st/cmos065_421/CLOCK65LPLVT_SNPS-AVT-CDS_2.1/behaviour/verilog/CLOCK65LPLVT.v"
+    fi
+    /bin/bash -c 'source /lab215/scripts/set_cadence.bash; \
+        irun -64bit -access +rwc -incdir ${BENCH_ROOT} \
+        -l ${ARCH_NAME}.log -input ${ARCH_NAME}.tcl -timescale 1ns/1ps -sv -top work.${TESTBENCH_TOP}:${BENCH_FILE_EXT} \
+        -define functional -uvmhome ${UVM_PATH} -uvm \
+        -defparam ${TESTBENCH_TOP}.CLK_PERIOD=${CLK_PER} \
+        -v200x -verbose -work work \
+        ${VERILOG_PRIMITIVES} \
+        ${ARCH_PATH}/outputs/${DESIGN_NAME}.v ${BENCH_ROOT}/${DESIGN_NAME}.${BENCH_FILE_EXT}'
+}
+
+################################
+# Help message function
+################################
+usage() {
+    echo -e "Usage: `basename $0` [OPTIONS]" 1>&2
+    echo -e "\nGlobal options:"
+    echo -e "\t -j, --jobs VALUE: maximum processes in parallel"
+    echo -e "\t -d, --debug:      debug mode, stop on error"
+    echo -e "\t -h, --help:       shows this message"
+    echo -e "Simulation options:"
+    echo -e "\t -a, --all:                all architectures will be simulated"
+    echo -e "\t -A, --architecture ARCH:  specify the architecture to be simulated"
+    echo -e "\t -p, --clock-period CLK:   set the clock period for RTL simulation (default: 10 ns)"
+    echo -e "\t -s, --post-synth:         use post-synthesis netlist for simulation"
+    echo -e "\t -n, --no-delay:           do not use SDF file (post-synth)"
+    echo -e "\t -t, --dump-tcf:           dump TCF file (default: no)"
+    echo -e "\t -v, --no-vcd:             do not dump VCD file"
+    echo -e "\t -l, --video-list:         inform video list to be used as input"
+    echo -e "\t -g, --gui:                open simulator GUI"
+    echo -e "Cleanup options:"
+    echo -e "\t -c, --clean:              clean everything"
+}
+
+export -f execute_sim_rtl
+export -f execute_sim_rtl_gui
+export -f execute_sim_netlist
+export -f execute_sim_netlist_nodelay
+
+################################
+# Parse arguments
+################################
+# Get arguments
+inputOptions=$(getopt -o "${ShortOpts}" --long "${LongOpts}" \
+    --name "${ScriptName}" -- "${@}")
+
+if [[ ($? -ne 0) || ($# -eq 0) ]]; then
+    usage
+    exit $E_OPTERR
+fi
+
+# Process arguments
+eval set -- "${inputOptions}"
+
+while true; do
+    case "${1}" in
+        -h|--help)
+            usage
+            exit 0;;
+        -c|--clean)
+            CLEAN_ALL=true;;
+        -d|--debug)
+            DEBUG_MODE=true;;
+        -a|--all)
+            ALL_ARCHS=true;;
+        -n|--no-delay)
+            NO_DELAY=true;;
+        -A|--architecture)
+            ARCH_NAMES+="$2 "
+            shift;;
+        -j|--jobs)
+            MAX_PROCS=$2
+            shift;;
+        -t|--dump-tcf)
+            export DUMP_TCF=true;;
+        -v|--no-vcd)
+            export NO_VCD=true;;
+        -p|--clock-period)
+            export CLK_PER=$2
+            shift;;
+        -l|--video-list)
+            VIDEO_LIST+="$2 "
+            shift;;
+        -s|--post-synth)
+            USE_NETLIST=true;;
+        -g|--gui)
+            USE_GUI=true;;
+        --)
+            shift
+            break;;
+        *)
+            echo -e "Invalid parameter!"
+            usage
+            exit -2;;
+    esac
+    shift
+done
+# Goes to the next argument
+shift $((OPTIND-1))
+
+# Check if specific architectures were specified
+if [ $ALL_ARCHS == false ] && [ $USE_NETLIST == false ]; then
+    # Get all specified architectures
+    for current_arch in $ARCH_NAMES
+    do
+        numberOfArchs=`find ${RTL_ROOT} -mindepth 1 -maxdepth 1 -name "*${current_arch}*" | wc -l`
+        if [ $numberOfArchs -gt 0 ]; then
+            ARCH_LIST+="`find ${RTL_ROOT} -mindepth 1 -maxdepth 1 -name \"*${current_arch}*\"` "
+            ((ARCH_COUNT+=$numberOfArchs))
+        else
+            echo -e "Architecture ${current_arch} files not found."
+        fi
+        # Get next argument
+        shift
+    done
+elif [ $ALL_ARCHS == true ] && [ $USE_NETLIST == true ]; then
+    # Get the directories from synthetized architectures
+    numberOfArchs=`find ${SYNTH_ROOT} -mindepth 1 -maxdepth 1 | wc -l`
+    if [ $numberOfArchs -gt 0 ]; then
+        ARCH_LIST=`find $SYNTH_ROOT -mindepth 1 -maxdepth 1`
+        ARCH_COUNT=${numberOfArchs}
+    else
+        echo -e "No synthetized architecture available for post-synthesis simulation... Aborting."
+        exit -2
+    fi
+
+elif [ $ALL_ARCHS == false ] && [ $USE_NETLIST == true ]; then
+    # Get all specified architectures
+    for current_arch in $ARCH_NAMES
+    do
+        # Check if the specified architecture exists
+        numberOfArchs=`find ${SYNTH_ROOT} -mindepth 1 -maxdepth 1 -name "*${current_arch}*" | wc -l`
+        if [ $numberOfArchs -gt 0 ]; then
+            ARCH_LIST+="`find ${SYNTH_ROOT} -mindepth 1 -maxdepth 1 -name \"*${current_arch}*\"` "
+            ((ARCH_COUNT+=$numberOfArchs))
+        else
+            echo -e "Architecture ${current_arch} files not found... Aborting."
+            exit -2
+        fi
+    done
+else
+    # RTL simulation of all architectures
+    numberOfArchs=`find ${RTL_ROOT} -mindepth 1 -maxdepth 1 | wc -l`
+    if [ $numberOfArchs -gt 0 ]; then
+        ARCH_LIST+="`find ${RTL_ROOT} -mindepth 1 -maxdepth 1` "
+        ARCH_COUNT=$numberOfArchs
+    else
+        echo -e "No RTL architecture available for post-synthesis simulation... Aborting."
+        exit -2
+    fi
+fi
+
+if [ $CLEAN_ALL == true ]; then
+    echo -e "Cleaning up simulation directory..." | tee -a $SIM_LOG_FILENAME
+    rm -rf ${SIMULATION_ROOT}
+    echo -e "Done!" | tee -a $SIM_LOG_FILENAME
+else
+    if [ $USE_NETLIST == true ]; then
+        echo -e "Starting post-synthesis simulation" | tee -a $SIM_LOG_FILENAME
+    else
+        echo -e "Starting RTL simulation" | tee -a $SIM_LOG_FILENAME
+    fi
+
+    echo -e "Number of available architectures: $ARCH_COUNT." | tee -a $SIM_LOG_FILENAME
+    echo -e "Creating working dir..." | tee -a $SIM_LOG_FILENAME
+    mkdir -p $SIMULATION_ROOT
+    if [ $DUMP_TCF == true ]; then
+        mkdir -p ${SIMULATION_ROOT}/tcf
+    fi
+    if [ $NO_VCD == false ]; then
+        mkdir -p $SIMULATION_ROOT/vcd
+    fi
+    
+    echo -e "Done creating working dir." | tee -a $SIM_LOG_FILENAME
+
+    echo -e "Searching for stimuli..." | tee -a $SIM_LOG_FILENAME
+    if [ "$VIDEO_LIST" == "" ]; then
+        MOVIE_LIST=`ls ${STIMULI_ROOT}`
+    else
+        MOVIE_LIST=$VIDEO_LIST
+    fi
+    echo -e "Found `echo $MOVIE_LIST | wc -w` videos." | tee -a $SIM_LOG_FILENAME
+    echo -e "Video list:" | tee -a $SIM_LOG_FILENAME
+    for movie in $MOVIE_LIST
+    do
+        echo -e "\t * $movie" | tee -a $SIM_LOG_FILENAME
+    done
+    
+    # Create command list
+    echo -e "Creating command list..." | tee -a $SIM_LOG_FILENAME
+    for movie in $MOVIE_LIST
+    do
+        for current_arch in $ARCH_LIST
+        do
+            COMMAND_LIST+="$current_arch $movie|"
+            ((NUMBER_OF_SIMULATIONS+=1))
+        done
+    done
+    
+    echo $MOVIE_LIST
+
+    echo -e "Number of simulations to be executed: ${NUMBER_OF_SIMULATIONS}" | tee -a $SIM_LOG_FILENAME
+    
+    #Execute simulation
+    if [ $USE_GUI == false ]; then
+        if [ $USE_NETLIST == true ] && [ $NO_DELAY == false ]; then
+            echo $COMMAND_LIST | sed -r 's/\|/\n/g' | xargs --max-args=1 -I{} --max-procs=${MAX_PROCS} /bin/bash -c "execute_sim_netlist {}"
+        elif [ $USE_NETLIST == true ] && [ $NO_DELAY == true ]; then
+            echo $COMMAND_LIST | sed -r 's/\|/\n/g' | xargs --max-args=1 -I{} --max-procs=${MAX_PROCS} /bin/bash -c "execute_sim_netlist_nodelay {}"
+        else
+            echo $COMMAND_LIST | sed -r 's/\|/\n/g' | xargs --max-args=1 -I{} --max-procs=${MAX_PROCS} /bin/bash -c "execute_sim_rtl {}"
+        fi
+    else
+        if [ $USE_NETLIST == true ] && [ $NO_DELAY == false ]; then
+            echo -e "Not implemented yet"
+            #echo $COMMAND_LIST | sed -r 's/\|/\n/g' | xargs --max-args=1 -I{} --max-procs=${MAX_PROCS} /bin/bash -c "execute_sim_netlist {}"
+        elif [ $USE_NETLIST == true ] && [ $NO_DELAY == true ]; then
+            echo "Not implemented yet"
+            #echo $COMMAND_LIST | sed -r 's/\|/\n/g' | xargs --max-args=1 -I{} --max-procs=${MAX_PROCS} /bin/bash -c "execute_sim_netlist_nodelay {}"
+        else
+            echo $COMMAND_LIST | sed -r 's/\|/\n/g' | xargs --max-args=1 -I{} --max-procs=1 /bin/bash -c "execute_sim_rtl_gui {}"
+        fi
+    fi
+fi
