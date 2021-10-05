@@ -20,3 +20,4 @@ GEN_RESULTS*/
 datasets/*.txt
 datasets/*_*
 train_data_full.py
+gen_decision_tree_full.py
