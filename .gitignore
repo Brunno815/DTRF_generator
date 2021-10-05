@@ -19,3 +19,4 @@ predict*.txt
 GEN_RESULTS*/
 datasets/*.txt
 datasets/*_*
+train_data_full.py
