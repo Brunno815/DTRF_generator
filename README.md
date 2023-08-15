@@ -1,9 +1,9 @@
-# DT/RF VLSI Generator
+# TreeIP
 
 ## General Description
-This project consists of a framework that integrates the Scikit-Learn structures of Decision Trees (DTs) and Random Forests (RFs), along with a dedicated HDL generation of RTL descriptions.
+The TreeIP project consists of a framework that integrates the Scikit-Learn structures of Decision Trees (DTs) and Random Forests (RFs), along with a dedicated HDL generation of RTL descriptions.
 
-This project was developed so that designers can easily perform design space explorations regarding the possible models for their data sets. This framework was developed to work with data sets that contain well-defined features in CSV files (see examples in the data sets folder to generalize).
+TreeIP was developed so that designers can easily perform design space explorations regarding the possible models for their data sets. This framework was developed to work with data sets that contain well-defined features in CSV files (see examples in the data sets folder to generalize).
 
 ## Preprocessing
 
@@ -17,8 +17,8 @@ Then, the structure is translated to RTL descriptions using our dedicated transl
 
 ## Requirements
 
-This code uses Genus and Irun for the synthesis, both of which are from Cadence. Therefore, the respective licenses are required.
+The code for TreeIP uses Genus and Irun for the synthesis, both of which are from Cadence. Therefore, the respective licenses are required.
 
 ## Running the code
 
-To run the code, you should run the train_data.py file, which will train the data sets, generate the RTL and synthesize it using Cadence tools. The ctes_trees.py file defines the configurations used in the DTs/RFs to be generated, as well as target period, data set, and so on.
+To run TreeIP, you should run the train_data.py file, which will train the data sets, generate the RTL and synthesize it using Cadence tools. The ctes_trees.py file defines the configurations used in the DTs/RFs to be generated, as well as target period, data set, and so on.
