@@ -816,6 +816,8 @@ for classifier in classifiers:
 
 		print(",".join([str(x) for x in [dataset, bits_precision, classifier, maxDepth, numTree, GGHitValue, GAHitValue, AAHitValue, isVhdlCorrect]]), file=fHits)
 
+		continue
+
 		print("Correctness state of VHDL: %d" % (isVhdlCorrect))
 
 		trnsfrToSynthEnv(nameCfg)
